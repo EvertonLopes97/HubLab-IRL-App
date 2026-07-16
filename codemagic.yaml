@@ -52,11 +52,18 @@ workflows:
 
       - name: Compilar sem assinatura
         script: |
+          # IMPORTANTE: usar -destination, NAO -sdk iphoneos.
+          # O Moblin tem um app de Apple Watch. Com -sdk iphoneos o Xcode
+          # forca TODOS os targets para iPhone, e o Watch acaba tentando
+          # gerar o mesmo Moblin.app do app principal:
+          #   "error: Multiple commands produce .../Moblin.app"
+          # Com -destination generic/platform=iOS cada target usa o SDK
+          # correto (o Watch vai para watchOS e e embutido).
           xcodebuild \
             -project Moblin.xcodeproj \
             -scheme Moblin \
             -configuration Release \
-            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -derivedDataPath build/dd \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
@@ -64,13 +71,22 @@ workflows:
             CODE_SIGN_ENTITLEMENTS="" \
             DEVELOPMENT_TEAM="" \
             build
-          echo "--- resultado ---"
-          ls -la build/dd/Build/Products/Release-iphoneos/
+          echo "--- procurando o .app gerado ---"
+          find build/dd/Build/Products -maxdepth 2 -name "*.app" -type d
 
       - name: Empacotar .ipa
         script: |
+          # Localiza o .app do iPhone (ignora o do Watch, se aparecer)
+          APP=$(find build/dd/Build/Products -maxdepth 2 -name "Moblin.app" -type d \
+                | grep -i iphoneos | head -1)
+          if [ -z "$APP" ]; then
+            echo "ERRO: nao achei o Moblin.app. Produtos gerados:"
+            find build/dd/Build/Products -maxdepth 2 -name "*.app" -type d
+            exit 1
+          fi
+          echo "Empacotando: $APP"
           mkdir -p build/ipa/Payload
-          cp -r build/dd/Build/Products/Release-iphoneos/Moblin.app build/ipa/Payload/
+          cp -r "$APP" build/ipa/Payload/
           cd build/ipa
           zip -qr HubLabIRL.ipa Payload
           rm -rf Payload
