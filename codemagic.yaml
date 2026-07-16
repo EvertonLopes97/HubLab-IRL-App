@@ -59,9 +59,12 @@ workflows:
           # Por isso o Moblin.app saia com Frameworks/ e PlugIns/ vazios e
           # sem Info.plist nenhum: o build simplesmente nao termina o app.
           #
-          # SKIP_INSTALL=NO e obrigatorio: por padrao muitos targets de app
-          # tem SKIP_INSTALL=YES (pensado para quando so se quer compilar,
-          # nao empacotar) o que faria o archive ficar vazio de novo.
+          # NAO passe SKIP_INSTALL=NO aqui. Aprendido na marra:
+          # na linha de comando ele vale para TODOS os targets, incluindo as
+          # bibliotecas (swift-collections etc). Cada uma tenta se instalar
+          # no archive, todas escrevem no mesmo lugar, e o Xcode aborta com
+          # "duplicate output file". Targets de APP ja tem SKIP_INSTALL=NO
+          # por padrao; bibliotecas tem YES justamente para nao fazer isso.
           xcodebuild \
             -project Moblin.xcodeproj \
             -scheme Moblin \
@@ -73,7 +76,6 @@ workflows:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
             DEVELOPMENT_TEAM="" \
-            SKIP_INSTALL=NO \
             archive
           echo "--- conteudo do archive ---"
           find build/Moblin.xcarchive -maxdepth 4
