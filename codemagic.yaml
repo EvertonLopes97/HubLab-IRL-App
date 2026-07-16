@@ -1,32 +1,32 @@
 # =====================================================================
-# HubLab IRL — fork do Moblin, buildado SEM MAC
+# HubLab IRL — fork do Moblin, build sem Mac
 #
-# Coloque este arquivo na RAIZ do SEU fork do Moblin.
-# Coloque tambem a pasta branding/ (com icon.png) na raiz.
-#
-# O que ele faz:
-#   1. cria o Config/User.xcconfig (o Moblin exige, e nao vem no repo)
-#   2. troca o icone e o nome do app pela sua marca
-#   3. compila sem assinatura e empacota o .ipa
-#
-# Voce assina depois no Windows com o Sideloadly + Apple ID gratis.
+# Este arquivo carrega o aprendizado de varios builds. NAO simplifique
+# sem ler os comentarios — cada um marca um erro real ja enfrentado.
 # =====================================================================
 
 workflows:
   hublab-irl:
     name: HubLab IRL (fork Moblin)
-    max_build_duration: 90
+    max_build_duration: 120
     instance_type: mac_mini_m2
 
     environment:
       xcode: latest
 
     scripts:
-      - name: Criar User.xcconfig (obrigatorio no Moblin)
+      # -----------------------------------------------------------------
+      - name: Criar User.xcconfig (o Moblin exige, e nao vem no repo)
         script: |
-          # O Moblin nao versiona este arquivo — cada fork cria o seu.
-          # DEVELOPMENT_TEAM fica VAZIO porque buildamos sem assinatura.
-          # CAPABILITIES=free usa entitlements que dispensam conta paga.
+          # O Moblin nao versiona este arquivo de proposito: cada fork cria
+          # o seu. Base.xcconfig faz #include "User.xcconfig", entao sem ele
+          # o projeto NAO abre.
+          #
+          # DEVELOPMENT_TEAM vazio  -> buildamos sem assinatura (Sideloadly assina depois)
+          # CAPABILITIES = free     -> usa os entitlements .free, que sao minimos:
+          #                            app principal tem 1 item, extensoes tem zero.
+          #                            O .all pede App Groups, HealthKit, WeatherKit,
+          #                            Siri — tudo isso exigiria conta paga.
           cat > Config/User.xcconfig << 'EOF'
           DEVELOPMENT_TEAM =
           BASE_PRODUCT_BUNDLE_IDENTIFIER = agency.hublab.irl
@@ -35,36 +35,60 @@ workflows:
           echo "--- User.xcconfig ---"
           cat Config/User.xcconfig
 
+      # -----------------------------------------------------------------
       - name: Aplicar a marca HubLab
         script: |
-          # Icone: e um unico PNG 1024x1024 chamado logo-square.png
+          # Icone: e um unico PNG 1024x1024 chamado logo-square.png dentro
+          # do AppIcon.appiconset (verificado no projeto).
           if [ -f branding/icon.png ]; then
             cp branding/icon.png "Moblin/Assets.xcassets/AppIcon.appiconset/logo-square.png"
-            echo "icone HubLab aplicado"
+            echo "OK: icone HubLab aplicado"
           else
-            echo "AVISO: branding/icon.png nao encontrado, mantendo icone original"
+            echo "AVISO: branding/icon.png ausente — icone original mantido"
           fi
 
-          # Nome embaixo do icone no iPhone
+          # Nome sob o icone. O padrao aparece em 4 lugares do pbxproj.
           sed -i '' 's/INFOPLIST_KEY_CFBundleDisplayName = Moblin;/INFOPLIST_KEY_CFBundleDisplayName = "HubLab IRL";/g' Moblin.xcodeproj/project.pbxproj
-          echo "--- nomes de exibicao ---"
-          grep -c 'CFBundleDisplayName = "HubLab IRL"' Moblin.xcodeproj/project.pbxproj || true
+          N=$(grep -c 'CFBundleDisplayName = "HubLab IRL"' Moblin.xcodeproj/project.pbxproj || echo 0)
+          echo "OK: nome aplicado em $N lugares (esperado: 4)"
+          if [ "$N" -eq 0 ]; then
+            echo "ERRO: o nome nao foi aplicado. O projeto mudou?"
+            exit 1
+          fi
 
-      - name: Compilar sem assinatura (archive, nao build)
+      # -----------------------------------------------------------------
+      - name: Baixar o Metal Toolchain
         script: |
-          # DESCOBERTA: 'xcodebuild build' NAO monta o pacote final. Ele so
-          # compila e linka; os passos que remontam o app de verdade (copiar
-          # o Info.plist processado, embutir o Watch app, organizar recursos)
-          # rodam na fase de "install", que so acontece com a acao 'archive'.
-          # Por isso o Moblin.app saia com Frameworks/ e PlugIns/ vazios e
-          # sem Info.plist nenhum: o build simplesmente nao termina o app.
+          # O Moblin tem 2 shaders Metal (efeitos Dewarp360 e CRT). No Xcode 26
+          # o compilador 'metal' virou componente SEPARADO, que nao vem
+          # instalado. Sem isto o archive falha com:
+          #   "cannot execute tool 'metal' due to missing Metal Toolchain"
+          xcodebuild -downloadComponent MetalToolchain || \
+            echo "AVISO: downloadComponent falhou; testando se metal ja existe"
+          echo "--- metal disponivel? ---"
+          xcrun -f metal || { echo "ERRO: sem compilador metal, o archive vai falhar"; exit 1; }
+
+      # -----------------------------------------------------------------
+      - name: Archive (NAO use 'build')
+        script: |
+          # LICOES DUramente aprendidas neste comando:
           #
-          # NAO passe SKIP_INSTALL=NO aqui. Aprendido na marra:
-          # na linha de comando ele vale para TODOS os targets, incluindo as
-          # bibliotecas (swift-collections etc). Cada uma tenta se instalar
-          # no archive, todas escrevem no mesmo lugar, e o Xcode aborta com
-          # "duplicate output file". Targets de APP ja tem SKIP_INSTALL=NO
-          # por padrao; bibliotecas tem YES justamente para nao fazer isso.
+          # 1) 'xcodebuild build' NAO monta o pacote final. Ele compila e
+          #    linka, mas quem copia o Info.plist processado, embute o Watch
+          #    app e organiza recursos e a fase de install — que so roda com
+          #    a acao 'archive'. Com 'build' o .app sai OCO (so Frameworks/
+          #    e PlugIns/ vazios, sem Info.plist).
+          #
+          # 2) NAO passe SKIP_INSTALL=NO. Na linha de comando ele vale para
+          #    TODOS os targets, inclusive as bibliotecas (swift-collections
+          #    etc). Cada uma tenta se instalar no archive, todas escrevem no
+          #    mesmo lugar => "duplicate output file" => ARCHIVE FAILED.
+          #    Targets de app ja tem SKIP_INSTALL=NO por padrao.
+          #
+          # 3) Use -destination, NAO -sdk iphoneos. O Moblin tem um app de
+          #    Apple Watch; com -sdk iphoneos o Xcode forca tudo para iPhone
+          #    e o Watch colide com o app principal:
+          #    "Multiple commands produce .../Moblin.app".
           xcodebuild \
             -project Moblin.xcodeproj \
             -scheme Moblin \
@@ -77,34 +101,59 @@ workflows:
             CODE_SIGN_ENTITLEMENTS="" \
             DEVELOPMENT_TEAM="" \
             archive
-          echo "--- conteudo do archive ---"
-          find build/Moblin.xcarchive -maxdepth 4
 
-      - name: Empacotar .ipa
+      # -----------------------------------------------------------------
+      - name: Conferir o app antes de empacotar
         script: |
           APP="build/Moblin.xcarchive/Products/Applications/Moblin.app"
-
-          if [ ! -f "$APP/Info.plist" ]; then
-            echo "ERRO: Info.plist ainda ausente. Conteudo do archive:"
-            find build/Moblin.xcarchive -maxdepth 5
+          if [ ! -d "$APP" ]; then
+            echo "ERRO: .app nao existe. Conteudo do archive:"
+            find build/Moblin.xcarchive -maxdepth 4
             exit 1
           fi
+          if [ ! -f "$APP/Info.plist" ]; then
+            echo "ERRO: sem Info.plist — app incompleto. Conteudo:"
+            ls -la "$APP"
+            exit 1
+          fi
+          echo "OK: app completo."
+          echo "--- nome e bundle id ---"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$APP/Info.plist" 2>/dev/null || echo "(sem display name)"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist"
+          echo "--- extensoes embutidas ---"
+          ls "$APP/PlugIns" 2>/dev/null || echo "(sem PlugIns)"
+          ls "$APP/Watch" 2>/dev/null || echo "(sem Watch)"
 
-          echo "==> OK: Info.plist presente. Conteudo do .app:"
-          ls -la "$APP"
+      # -----------------------------------------------------------------
+      - name: Empacotar 2 versoes (completa e leve)
+        script: |
+          # Geramos DUAS. Motivo: com Apple ID gratis, cada extensao consome
+          # um App ID (limite de 10 por 7 dias). Este fork gera 5 bundle ids:
+          #   app, .Watch, .Watch.Widget, .LiveActivity, .Moblin-Capture
+          # A versao LEVE remove Watch + extensoes -> 1 bundle id so.
+          # Se a COMPLETA falhar no Sideloadly, use a LEVE sem rebuildar.
+          APP="build/Moblin.xcarchive/Products/Applications/Moblin.app"
 
-          rm -rf build/ipa
-          mkdir -p build/ipa/Payload
+          # --- completa ---
+          rm -rf build/ipa && mkdir -p build/ipa/Payload
           cp -R "$APP" build/ipa/Payload/
-          cd build/ipa
-          zip -qr HubLabIRL.ipa Payload
-          rm -rf Payload
-          echo "--- confere o que entrou no .ipa ---"
-          unzip -l HubLabIRL.ipa | head -15
-          ls -la
+          (cd build/ipa && zip -qr HubLabIRL-completo.ipa Payload && rm -rf Payload)
+
+          # --- leve ---
+          rm -rf build/lite && mkdir -p build/lite/Payload
+          cp -R "$APP" build/lite/Payload/
+          rm -rf "build/lite/Payload/Moblin.app/Watch"
+          rm -rf "build/lite/Payload/Moblin.app/PlugIns"
+          (cd build/lite && zip -qr HubLabIRL-leve.ipa Payload && rm -rf Payload)
+
+          mkdir -p build/out
+          mv build/ipa/HubLabIRL-completo.ipa build/out/
+          mv build/lite/HubLabIRL-leve.ipa build/out/
+          echo "--- resultado ---"
+          ls -lh build/out/
 
     artifacts:
-      - build/ipa/*.ipa
+      - build/out/*.ipa
 
     publishing:
       email:
