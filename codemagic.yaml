@@ -74,22 +74,59 @@ workflows:
           echo "--- procurando o .app gerado ---"
           find build/dd/Build/Products -maxdepth 2 -name "*.app" -type d
 
+      - name: DIAGNOSTICO - o que o Xcode gerou
+        script: |
+          echo "########## TODOS OS PRODUTOS ##########"
+          find build/dd/Build/Products -maxdepth 3 | head -40
+          echo ""
+          echo "########## TODOS OS .app ##########"
+          find build/dd/Build -name "*.app" -type d 2>/dev/null | head -20
+          echo ""
+          echo "########## ONDE HA Info.plist ##########"
+          find build/dd/Build -name "Info.plist" -path "*.app/*" 2>/dev/null | head -10
+        ignore_failure: true
+
       - name: Empacotar .ipa
         script: |
-          # Localiza o .app do iPhone (ignora o do Watch, se aparecer)
+          # Pega o .app do iPhone e CONFERE que ele esta completo antes de
+          # empacotar. O erro "no item named Payload/Moblin.app/Info.plist"
+          # no Sideloadly significa app incompleto — melhor descobrir aqui.
           APP=$(find build/dd/Build/Products -maxdepth 2 -name "Moblin.app" -type d \
                 | grep -i iphoneos | head -1)
+
           if [ -z "$APP" ]; then
-            echo "ERRO: nao achei o Moblin.app. Produtos gerados:"
-            find build/dd/Build/Products -maxdepth 2 -name "*.app" -type d
+            echo "ERRO: nao achei Moblin.app em Release-iphoneos. Existentes:"
+            find build/dd/Build -name "*.app" -type d
             exit 1
           fi
-          echo "Empacotando: $APP"
+
+          echo "==> Candidato: $APP"
+          echo "--- conteudo ---"
+          ls -la "$APP"
+
+          if [ ! -f "$APP/Info.plist" ]; then
+            echo ""
+            echo "ERRO: este .app NAO tem Info.plist — esta incompleto."
+            echo "Procurando um .app completo em outro lugar..."
+            for c in $(find build/dd/Build -name "*.app" -type d); do
+              if [ -f "$c/Info.plist" ]; then
+                echo "  COMPLETO: $c"
+              else
+                echo "  incompleto: $c"
+              fi
+            done
+            exit 1
+          fi
+
+          echo "==> OK: Info.plist presente. Empacotando."
+          rm -rf build/ipa
           mkdir -p build/ipa/Payload
-          cp -r "$APP" build/ipa/Payload/
+          cp -R "$APP" build/ipa/Payload/
           cd build/ipa
           zip -qr HubLabIRL.ipa Payload
           rm -rf Payload
+          echo "--- confere o que entrou no .ipa ---"
+          unzip -l HubLabIRL.ipa | head -12
           ls -la
 
     artifacts:
