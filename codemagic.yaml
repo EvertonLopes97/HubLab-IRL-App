@@ -50,75 +50,47 @@ workflows:
           echo "--- nomes de exibicao ---"
           grep -c 'CFBundleDisplayName = "HubLab IRL"' Moblin.xcodeproj/project.pbxproj || true
 
-      - name: Compilar sem assinatura
+      - name: Compilar sem assinatura (archive, nao build)
         script: |
-          # IMPORTANTE: usar -destination, NAO -sdk iphoneos.
-          # O Moblin tem um app de Apple Watch. Com -sdk iphoneos o Xcode
-          # forca TODOS os targets para iPhone, e o Watch acaba tentando
-          # gerar o mesmo Moblin.app do app principal:
-          #   "error: Multiple commands produce .../Moblin.app"
-          # Com -destination generic/platform=iOS cada target usa o SDK
-          # correto (o Watch vai para watchOS e e embutido).
+          # DESCOBERTA: 'xcodebuild build' NAO monta o pacote final. Ele so
+          # compila e linka; os passos que remontam o app de verdade (copiar
+          # o Info.plist processado, embutir o Watch app, organizar recursos)
+          # rodam na fase de "install", que so acontece com a acao 'archive'.
+          # Por isso o Moblin.app saia com Frameworks/ e PlugIns/ vazios e
+          # sem Info.plist nenhum: o build simplesmente nao termina o app.
+          #
+          # SKIP_INSTALL=NO e obrigatorio: por padrao muitos targets de app
+          # tem SKIP_INSTALL=YES (pensado para quando so se quer compilar,
+          # nao empacotar) o que faria o archive ficar vazio de novo.
           xcodebuild \
             -project Moblin.xcodeproj \
             -scheme Moblin \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath build/dd \
+            -archivePath build/Moblin.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
             DEVELOPMENT_TEAM="" \
-            build
-          echo "--- procurando o .app gerado ---"
-          find build/dd/Build/Products -maxdepth 2 -name "*.app" -type d
-
-      - name: DIAGNOSTICO - o que o Xcode gerou
-        script: |
-          echo "########## TODOS OS PRODUTOS ##########"
-          find build/dd/Build/Products -maxdepth 3 | head -40
-          echo ""
-          echo "########## TODOS OS .app ##########"
-          find build/dd/Build -name "*.app" -type d 2>/dev/null | head -20
-          echo ""
-          echo "########## ONDE HA Info.plist ##########"
-          find build/dd/Build -name "Info.plist" -path "*.app/*" 2>/dev/null | head -10
-        ignore_failure: true
+            SKIP_INSTALL=NO \
+            archive
+          echo "--- conteudo do archive ---"
+          find build/Moblin.xcarchive -maxdepth 4
 
       - name: Empacotar .ipa
         script: |
-          # Pega o .app do iPhone e CONFERE que ele esta completo antes de
-          # empacotar. O erro "no item named Payload/Moblin.app/Info.plist"
-          # no Sideloadly significa app incompleto — melhor descobrir aqui.
-          APP=$(find build/dd/Build/Products -maxdepth 2 -name "Moblin.app" -type d \
-                | grep -i iphoneos | head -1)
-
-          if [ -z "$APP" ]; then
-            echo "ERRO: nao achei Moblin.app em Release-iphoneos. Existentes:"
-            find build/dd/Build -name "*.app" -type d
-            exit 1
-          fi
-
-          echo "==> Candidato: $APP"
-          echo "--- conteudo ---"
-          ls -la "$APP"
+          APP="build/Moblin.xcarchive/Products/Applications/Moblin.app"
 
           if [ ! -f "$APP/Info.plist" ]; then
-            echo ""
-            echo "ERRO: este .app NAO tem Info.plist — esta incompleto."
-            echo "Procurando um .app completo em outro lugar..."
-            for c in $(find build/dd/Build -name "*.app" -type d); do
-              if [ -f "$c/Info.plist" ]; then
-                echo "  COMPLETO: $c"
-              else
-                echo "  incompleto: $c"
-              fi
-            done
+            echo "ERRO: Info.plist ainda ausente. Conteudo do archive:"
+            find build/Moblin.xcarchive -maxdepth 5
             exit 1
           fi
 
-          echo "==> OK: Info.plist presente. Empacotando."
+          echo "==> OK: Info.plist presente. Conteudo do .app:"
+          ls -la "$APP"
+
           rm -rf build/ipa
           mkdir -p build/ipa/Payload
           cp -R "$APP" build/ipa/Payload/
@@ -126,7 +98,7 @@ workflows:
           zip -qr HubLabIRL.ipa Payload
           rm -rf Payload
           echo "--- confere o que entrou no .ipa ---"
-          unzip -l HubLabIRL.ipa | head -12
+          unzip -l HubLabIRL.ipa | head -15
           ls -la
 
     artifacts:
