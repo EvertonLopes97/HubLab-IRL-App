@@ -1,0 +1,27 @@
+name: hublab_irl
+description: "HubLab · Sala de Controle IRL — câmera do celular para o OBS."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.2.1
+
+  # Streaming multiplataforma:
+  #   iOS     -> HaishinKit 2.2.5
+  #   Android -> RootEncoder 2.7.1
+  rtmp_streaming: ^1.0.5
+
+  # Permissões de câmera e microfone
+  permission_handler: ^11.3.1
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

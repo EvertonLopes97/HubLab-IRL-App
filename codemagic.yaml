@@ -1,0 +1,88 @@
+# =====================================================================
+# HubLab IRL — fork do Moblin, buildado SEM MAC
+#
+# Coloque este arquivo na RAIZ do SEU fork do Moblin.
+# Coloque tambem a pasta branding/ (com icon.png) na raiz.
+#
+# O que ele faz:
+#   1. cria o Config/User.xcconfig (o Moblin exige, e nao vem no repo)
+#   2. troca o icone e o nome do app pela sua marca
+#   3. compila sem assinatura e empacota o .ipa
+#
+# Voce assina depois no Windows com o Sideloadly + Apple ID gratis.
+# =====================================================================
+
+workflows:
+  hublab-irl:
+    name: HubLab IRL (fork Moblin)
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+
+    environment:
+      xcode: latest
+
+    scripts:
+      - name: Criar User.xcconfig (obrigatorio no Moblin)
+        script: |
+          # O Moblin nao versiona este arquivo — cada fork cria o seu.
+          # DEVELOPMENT_TEAM fica VAZIO porque buildamos sem assinatura.
+          # CAPABILITIES=free usa entitlements que dispensam conta paga.
+          cat > Config/User.xcconfig << 'EOF'
+          DEVELOPMENT_TEAM =
+          BASE_PRODUCT_BUNDLE_IDENTIFIER = agency.hublab.irl
+          CAPABILITIES = free
+          EOF
+          echo "--- User.xcconfig ---"
+          cat Config/User.xcconfig
+
+      - name: Aplicar a marca HubLab
+        script: |
+          # Icone: e um unico PNG 1024x1024 chamado logo-square.png
+          if [ -f branding/icon.png ]; then
+            cp branding/icon.png "Moblin/Assets.xcassets/AppIcon.appiconset/logo-square.png"
+            echo "icone HubLab aplicado"
+          else
+            echo "AVISO: branding/icon.png nao encontrado, mantendo icone original"
+          fi
+
+          # Nome embaixo do icone no iPhone
+          sed -i '' 's/INFOPLIST_KEY_CFBundleDisplayName = Moblin;/INFOPLIST_KEY_CFBundleDisplayName = "HubLab IRL";/g' Moblin.xcodeproj/project.pbxproj
+          echo "--- nomes de exibicao ---"
+          grep -c 'CFBundleDisplayName = "HubLab IRL"' Moblin.xcodeproj/project.pbxproj || true
+
+      - name: Compilar sem assinatura
+        script: |
+          xcodebuild \
+            -project Moblin.xcodeproj \
+            -scheme Moblin \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/dd \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            DEVELOPMENT_TEAM="" \
+            build
+          echo "--- resultado ---"
+          ls -la build/dd/Build/Products/Release-iphoneos/
+
+      - name: Empacotar .ipa
+        script: |
+          mkdir -p build/ipa/Payload
+          cp -r build/dd/Build/Products/Release-iphoneos/Moblin.app build/ipa/Payload/
+          cd build/ipa
+          zip -qr HubLabIRL.ipa Payload
+          rm -rf Payload
+          ls -la
+
+    artifacts:
+      - build/ipa/*.ipa
+
+    publishing:
+      email:
+        recipients:
+          - evertonmendeslopes97@gmail.com
+        notify:
+          success: true
+          failure: true
